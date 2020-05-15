@@ -673,6 +673,35 @@ Limiting operation depends on `chrome-default-limit'."
 (defvar chrome--devtools-id-map (make-hash-table :test 'equal)
   "A hash map that translates short tab id's into their full devtools API id.")
 
+(defun chrome--devtools-get-tabs (host port)
+  "Pull the current tab state from a devtools remote debugger at HOST:PORT."
+  ;; xxx: needs error checking
+  (with-temp-buffer
+    (url-insert-file-contents
+     (chrome-devtools-uri :verb "list"
+                          :host host
+                          :port port))
+    (let ((data (json-read)))
+      (cl-loop for tab-data across data
+               for tab-idx from 0
+               when (equal (cdr (assoc 'type tab-data)) "page")
+               collect
+               ;; tab-idx is an index into the devtools json list, not a tab/page counter
+               (let ((short-id
+                      (string-to-number
+                       (format "%d%d" port tab-idx))))
+                 ;; maintain a hash map for short-id to long-id lookups for known tab state
+                 (puthash
+                  short-id
+                  (cdr (assoc 'id tab-data))
+                  chrome--devtools-id-map)
+                 (list
+                  short-id
+                  (cdr (assoc 'url tab-data))
+                  (cdr (assoc 'title tab-data))))
+               into devtabs
+               finally return (cons tab-idx devtabs)))))
+
 (cl-defun chrome-devtools-uri (&key verb id (host "127.0.0.1") (port 9222))
   "Return a devtools remote debugging VERB/ID uri."
   (let* ((action
@@ -701,36 +730,10 @@ tab-ids, urls and titles are vectors of same length.
   (let ((tab-record '()))
     (dolist (chrome-devtools-session chrome--devtools-sessions)
       ;; we treat the devtools port for the instance as our pid, and "devtools" as a virtual window with id 0
-      (let* ((session-port (car chrome-devtools-session))
-             (session-host (cdr chrome-devtools-session))
+      (let* ((port (car chrome-devtools-session))
+             (host (cdr chrome-devtools-session))
              (devtools-window-id 0)
-             ;; xxx: make this a function, needs error checking
-             (tab-collect
-              (with-temp-buffer
-                (url-insert-file-contents
-                 (chrome-devtools-uri :verb "list"
-                                      :host session-host
-                                      :port session-port))
-                (let ((data (json-read)))
-                  (cl-loop for tab-data across data
-                           for tab-idx from 0
-                           when (equal (cdr (assoc 'type tab-data)) "page")
-                           collect
-                           ;; tab-idx is an index into the devtools json list, not a tab/page counter
-                           (let ((short-id
-                                  (string-to-number
-                                   (format "%d%d" session-port tab-idx))))
-                             ;; maintain a hash map for short-id to long-id lookups for known tab state
-                             (puthash
-                              short-id
-                              (cdr (assoc 'id tab-data))
-                              chrome--devtools-id-map)
-                             (list
-                              short-id
-                              (cdr (assoc 'url tab-data))
-                              (cdr (assoc 'title tab-data))))
-                           into devtabs
-                           finally return (cons tab-idx devtabs)))))
+             (tab-collect (chrome--devtools-get-tabs host port))
              (obj-count (car tab-collect))
              (devtabs (cdr tab-collect))
              (window-ids (vector devtools-window-id))
@@ -744,65 +747,65 @@ tab-ids, urls and titles are vectors of same length.
                          (vector tab-ids)
                          (vector tab-urls)
                          (vector tab-titles))))
-        ;; we use the session port as an identifier, which is expected to be a string in the indexer
-        (cl-pushnew (cons (format "%d" session-port)
+        ;; we use the devtools port as an identifier, which is expected to be a string in the indexer
+        (cl-pushnew (cons (format "%d" port)
                           (vector window-ids active-tab-ids tabs-vect))
                     tab-record)))
     (cons :reco tab-record)))
 
-(defun chrome--devtools-apply-verb-to-tab-ids (session-port tab-ids verb)
+(defun chrome--devtools-apply-verb (port tab-ids verb)
   ;; xxx: collect any errors here
-  (let ((session-host (cdr (assoc session-port chrome--devtools-sessions))))
+  (let ((host (cdr (assoc port chrome--devtools-sessions))))
     (mapcar #'(lambda (id)
                 (with-temp-buffer
                   (url-insert-file-contents
                    (chrome-devtools-uri
                     :verb verb
                     :id (gethash id chrome--devtools-id-map)
-                    :host session-host
-                    :port session-port))))
+                    :host host
+                    :port port))))
             ;; this is a vector of tab-id
             tab-ids))
   ;; xxx: errors are returned as an alist with ("error" . xxx) ("error-data" . xxx) pairs
   nil)
 
-(defun chrome--devtools-pull-tabs-from-map (tab-ids)
+(defun chrome--devtools-remove (tab-ids)
   (mapc #'(lambda (tab-id)
             (remhash tab-id chrome--devtools-id-map))
         tab-ids))
 
-(defun chrome--delete-tab-vect (session-port tab-vect)
-  (chrome--devtools-apply-verb-to-tab-ids
-   session-port
+(defun chrome--devtools-delete (port tab-vect)
+  (chrome--devtools-apply-verb
+   port
    tab-vect
    "close")
   ;; remove tab from lookup map
-  (chrome--devtools-pull-tabs-from-map tab-vect)
+  (chrome--devtools-remove tab-vect)
   ;; xxx: errors should go here as well
   (list (cons "count" (length tab-vect))))
 
 (defsubst chrome--delete-single (tab-ids)
   ;; the head of the session alist is the default session
-  (let ((session-port (caar chrome--devtools-sessions))
+  (let ((port (caar chrome--devtools-sessions))
         (tab-vect (cdadr tab-ids)))
-    (chrome--delete-tab-vect session-port tab-vect)))
+    (chrome--devtools-delete port tab-vect)))
 
-(defsubst chrome--delete-multi (session-port tab-ids)
+(defsubst chrome--delete-multi (port tab-ids)
   (let ((tab-vect (cdadr tab-ids)))
-    (chrome--delete-tab-vect session-port tab-vect)))
+    (chrome--devtools-delete port tab-vect)))
 
 (defsubst chrome--visit-tab-single (window-id tab-id noraise)
   ;; we ignore noraise and window-id, not needed for us
-  (let ((session-port (caar chrome--devtools-sessions)))
-    (chrome--devtools-apply-verb-to-tab-ids
-     session-port
+  (let ((port (caar chrome--devtools-sessions)))
+    (chrome--devtools-apply-verb
+     port
      (vector tab-id)
      "activate")))
 
-(defsubst chrome--visit-tab-multi (session-port window-id tab-id noraise)
+(defsubst chrome--visit-tab-multi (port window-id tab-id noraise)
   ;; we ignore noraise and window-id, not needed for us
-  (chrome--devtools-apply-verb-to-tab-ids
-   session-port
+  (chrome--devtools-apply-verb
+   port
    (vector tab-id)
    "activate"))
 
