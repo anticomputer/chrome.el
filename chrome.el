@@ -86,9 +86,6 @@
   ""
   :group 'chrome)
 
-(defvar chrome-application-name "Google Chrome"
-  "Name to use when retrieving application instance reference.
-Change this if you are using Google Chrome Canary.")
 
 (defvar chrome-single-instance t
   "If non-nil, get all tabs from all windows from a single Chrome instance.
@@ -97,8 +94,7 @@ configuration, but in the case where multiple Chrome instances are running,
 it is not possible to choose which one will be used.
 
 If nil, get all tabs from all windows belonging to all currently running
-Chrome instances. You need to enable Remote Apple Events for this, as
-described in the documentation.")
+Chrome instances.")
 
 
 (defvar chrome-render-function #'chrome-render-tab
@@ -149,13 +145,6 @@ what was previously there (except filter and limit).
 Currently this only applies to `chrome-visit-tab'.
 
 Delete operations always trigger a tab retrieval post-operation.")
-
-(defvar chrome-script-directory
-  (and load-file-name
-       (concat (file-name-directory load-file-name)
-               (file-name-as-directory "scripts")))
-  "Directory that contains JXA Chrome control scripts.
-Set this manually if auto-detection fails.")
 
 (cl-defstruct (chrome-tab
                (:constructor chrome-tab-create)
@@ -294,11 +283,6 @@ TABS must be an alist as returned from `chrome-get-tabs'."
 
 
 (defvar-local chrome--active-filter nil)
-
-(defun chrome--find-script (name)
-  (unless chrome-script-directory
-    (error "Script directory is unset (chrome-script-directory)"))
-  (concat chrome-script-directory name))
 
 (defvar-local chrome--last-tab nil)
 
