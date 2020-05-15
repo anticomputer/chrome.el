@@ -670,7 +670,7 @@ Limiting operation depends on `chrome-default-limit'."
 (defvar chrome--devtools-sessions '((9222 . "127.0.0.1"))
   "An alist of devtools debug port sessions consisting of (port . host) pairs.")
 
-(defvar chrome--devtools-id-map (make-hash-table :test 'eql)
+(defvar chrome--devtools-id-map (make-hash-table :test 'equal)
   "A hash map that translates short tab id's into their full devtools API id.")
 
 (cl-defun chrome-devtools-uri (&key verb id (host "127.0.0.1") (port 9222))
@@ -694,6 +694,10 @@ represents the currently active devtools debug port.
 tabs is a vector of 3 elements: [[tab-ids], [urls], [titles]] where
 tab-ids, urls and titles are vectors of same length.
 "
+
+  ;; reset our hashmap, we rebuild it every time this is called to prevent id collision
+  (setq chrome--devtools-id-map (make-hash-table :test 'equal))
+
   (let ((tab-record '()))
     (dolist (chrome-devtools-session chrome--devtools-sessions)
       ;; we treat the devtools port for the instance as our pid, and "devtools" as a virtual window with id 0
@@ -712,10 +716,11 @@ tab-ids, urls and titles are vectors of same length.
                            for tab-idx from 0
                            when (equal (cdr (assoc 'type tab-data)) "page")
                            collect
+                           ;; tab-idx is an index into the devtools json list, not a tab/page counter
                            (let ((short-id
                                   (string-to-number
                                    (format "%d%d" session-port tab-idx))))
-                             ;; we maintain a hash map for short-id to long-id lookups
+                             ;; maintain a hash map for short-id to long-id lookups for known tab state
                              (puthash
                               short-id
                               (cdr (assoc 'id tab-data))
@@ -725,9 +730,8 @@ tab-ids, urls and titles are vectors of same length.
                               (cdr (assoc 'url tab-data))
                               (cdr (assoc 'title tab-data))))
                            into devtabs
-                           and do (cl-incf tab-idx)
                            finally return (cons tab-idx devtabs)))))
-             (tab-count (car tab-collect))
+             (obj-count (car tab-collect))
              (devtabs (cdr tab-collect))
              (window-ids (vector devtools-window-id))
              ;; the first tab in our tabs list is the only active tab we can determine, so use that
