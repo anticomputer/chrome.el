@@ -6,7 +6,7 @@
 ;; Version: 0.5 - 2020-05-10
 ;; Author: xristos <xristos@sdf.org>
 ;; URL: https://github.com/atomontage/osa-chrome
-;; Package-Requires: ((emacs "25") osa)
+;; Package-Requires: ((emacs "25") osa url json)
 ;; Keywords: comm
 
 ;; Redistribution and use in source and binary forms, with or without
@@ -47,7 +47,7 @@
 
 ;;; Code:
 
-(require 'osa)
+;; (require 'osa)
 (require 'subr-x)
 (require 'cl-lib)
 (require 'auth-source)
@@ -683,7 +683,7 @@ Limiting operation depends on `osa-chrome-default-limit'."
   (when-let ((line (osa-chrome-tab-line tab)))
     (osa-chrome--goto-line line)))
 
-(defun osa-chrome-get-tabs ()
+(defun osa-chrome-get-tabs-xxx ()
   "Return a record (alist) containing tab information.
 
 The alist contains (pid . [window-ids, active-tab-ids, tabs]) pairs,
@@ -705,6 +705,138 @@ and active-tab-ids."
                  (unless osa-chrome-single-instance (osa-chrome--machine-url))))
     ret))
 
+;;;
+;;; Devtools API versions of the osa-chrome tab functions
+;;;
+
+(require 'cl-lib)
+(require 'url)
+(require 'json)
+
+;; a list of chrome sessions with remote debugging ports
+;; maintained as strings due to api compat requirements
+;; which expects pids as strings
+(defvar osa-chrome-devtools-sessions '((9222 . "127.0.0.1")))
+
+(cl-defun osa-chrome-devtools-uri (&key verb id (host "127.0.0.1") (port 9222))
+  "Return a devtools remote debugging VERB/ID uri."
+  (let* ((action
+          (if id
+              (format "%s/%X" verb id)
+            verb))
+         (uri (format "http://%s:%d/json/%s" host port action)))
+    uri))
+
+(defun osa-chrome-get-tabs ()
+  "Return a record (alist) containing tab information.
+
+The alist contains (port . [window-ids, active-tab-ids, tabs]) pairs,
+where:
+
+window-ids and active-tab-ids are vectors of length 1, and port
+represents the currently active devtools debug port.
+
+tabs is a vector of 3 elements: [[tab-ids], [urls], [titles]] where
+tab-ids, urls and titles are vectors of same length.
+"
+  (let ((tab-record '()))
+    (dolist (osa-chrome-devtools-session osa-chrome-devtools-sessions)
+      ;; we treat the devtools port for the instance as our pid, and "devtools" as a virtual window with id 0
+      (let* ((session-port (car osa-chrome-devtools-session))
+             (session-host (cdr osa-chrome-devtools-session))
+             (devtools-window-id 0)
+             ;; xxx: make this a function, needs error checking
+             (tab-collect
+              (with-temp-buffer
+                (url-insert-file-contents
+                 (osa-chrome-devtools-uri :verb "list"
+                                          :host session-host
+                                          :port session-port))
+                (let ((data (json-read)))
+                  (cl-loop for tab-data across data
+                           for tab-count from 0
+                           when (equal (cdr (assoc 'type tab-data)) "page")
+                           do (cl-incf tab-count)
+                           and collect
+                           (list (string-to-number (cdr (assoc 'id tab-data)) 16)
+                                 (cdr (assoc 'url tab-data))
+                                 (cdr (assoc 'title tab-data)))
+                           into devtabs
+                           ;; keep the count just in case we need to make-vector based off of it
+                           finally return (cons tab-count devtabs)))))
+             (tab-count (car tab-collect))
+             (devtabs (cdr tab-collect))
+             (window-ids (vector devtools-window-id))
+             ;; the first tab in our tabs list is the only active tab we can determine, so use that
+             (active-tab-ids (vector (caar devtabs)))
+             (tab-ids (vconcat (mapcar #'(lambda (tab) (car tab)) devtabs)))
+             (tab-urls (vconcat (mapcar #'(lambda (tab) (cadr tab)) devtabs)))
+             (tab-titles (vconcat (mapcar #'(lambda (tab) (caddr tab)) devtabs)))
+             ;; so we pretend that we have a single window "devtools" that contains everything
+             (tabs-vect (vector
+                         (vector tab-ids)
+                         (vector tab-urls)
+                         (vector tab-titles))))
+        ;; we use the session port as a pid, which is expected to be a string in the indexer
+        (cl-pushnew(cons (format "%d" session-port)
+                         (vector window-ids active-tab-ids tabs-vect))
+                    tab-record)))
+    (cons :reco tab-record)))
+
+(defun osa-chrome--apply-devtools-verb-to-tab-ids (session-port tab-ids verb)
+  ;; xxx: collect any errors here
+  (let ((session-host (cdr (assoc session-port osa-chrome-devtools-sessions))))
+    (mapcar #'(lambda (id)
+                (with-temp-buffer
+                  (url-insert-file-contents
+                   (osa-chrome-devtools-uri
+                    :verb verb
+                    :id id
+                    :host session-host
+                    :port session-port))))
+            ;; this is a vector of tab-id
+            tab-ids))
+  ;; xxx: errors are returned as an alist with ("error" . xxx) ("error-data" . xxx) pairs
+  nil)
+
+(defsubst osa-chrome--delete-single (tab-ids)
+  ;; the head of the session alist is the default session
+  (let ((session-port (caar osa-chrome-devtools-sessions)))
+    (osa-chrome--apply-devtools-verb-to-tab-ids
+     session-port
+     (cdadr tab-ids)
+     "close")))
+
+(defsubst osa-chrome--delete-multi (session-port tab-ids)
+  (osa-chrome--apply-devtools-verb-to-tab-ids
+   session-port
+   (cdadr tab-ids)
+   "close"))
+
+(defsubst osa-chrome--visit-tab-single (window-id tab-id noraise)
+  ;; we ignore noraise and window-id, not needed for us
+  (let ((session-port (caar osa-chrome-devtools-sessions)))
+    (osa-chrome--apply-devtools-verb-to-tab-ids
+     session-port
+     (vector tab-id)
+     "activate")))
+
+(defsubst osa-chrome--visit-tab-multi (session-port window-id tab-id noraise)
+  ;; we ignore noraise and window-id, not needed for us
+  (osa-chrome--apply-devtools-verb-to-tab-ids
+   session-port
+   (vector tab-id)
+   "activate"))
+
+;; xxx: todo
+(defsubst osa-chrome--view-source-single (window-id tab-id)
+  (message "called osa-chrome--view-source-single-devtools")
+  nil)
+
+;; xxx: todo
+(defsubst osa-chrome--view-source-multi (pid window-id tab-id)
+  (message "called osa-chrome--view-source-multi-devtools")
+  nil)
 
 ;;;
 ;;; Interactive
@@ -801,13 +933,13 @@ and limit."
   (setq osa-chrome--active-filter nil)
   (osa-chrome--filter-tabs))
 
-(defsubst osa-chrome--delete-single (tab-ids)
+(defsubst osa-chrome--delete-single-xxx (tab-ids)
   (osa-eval-file (osa-chrome--find-script "delete-tabs-single.js")
                  :lang "JavaScript"
                  :call "delete_tabs_single"
                  :args (list osa-chrome-application-name tab-ids)))
 
-(defsubst osa-chrome--delete-multi (pid tab-ids)
+(defsubst osa-chrome--delete-multi-xxx (pid tab-ids)
   (osa-eval-file (osa-chrome--find-script "delete-tabs-multi.js")
                  :lang "JavaScript"
                  :call "delete_tabs_multi"
@@ -918,14 +1050,14 @@ If there is a region, only unmark tabs in region."
   (osa-chrome-do-visible-tabs #'osa-chrome-unmark-tab))
 
 
-(defsubst osa-chrome--view-source-single (window-id tab-id)
+(defsubst osa-chrome--view-source-single-xxx (window-id tab-id)
   (osa-eval-file (osa-chrome--find-script "view-source-single.js")
                  :lang "JavaScript"
                  :call "view_source_single"
                  :args (list osa-chrome-application-name
                              window-id tab-id)))
 
-(defsubst osa-chrome--view-source-multi (pid window-id tab-id)
+(defsubst osa-chrome--view-source-multi-xxx (pid window-id tab-id)
   (osa-eval-file (osa-chrome--find-script "view-source-multi.js")
                  :lang "JavaScript"
                  :call "view_source_multi"
@@ -956,14 +1088,14 @@ in Chrome to use this command."
             (display-buffer buf)))))
     (force-mode-line-update)))
 
-(defsubst osa-chrome--visit-tab-single (window-id tab-id noraise)
+(defsubst osa-chrome--visit-tab-single-xxx (window-id tab-id noraise)
   (osa-eval-file (osa-chrome--find-script "set-tab-single.js")
                  :lang "JavaScript"
                  :call "set_tab_single"
                  :args (list osa-chrome-application-name window-id
                              tab-id (not noraise))))
 
-(defsubst osa-chrome--visit-tab-multi (pid window-id tab-id noraise)
+(defsubst osa-chrome--visit-tab-multi-xxx (pid window-id tab-id noraise)
   (osa-eval-file (osa-chrome--find-script "set-tab-multi.js")
                  :lang "JavaScript"
                  :call "set_tab_multi"
