@@ -223,9 +223,9 @@ TABS must be an alist as returned from `chrome-get-tabs'."
      for url    across urls
      for title  across titles do
      (let ((tab (chrome-tab-create :pid pid :id tab-id :url url
-                                       :title title
-                                       :window-id window-id
-                                       :is-active (= tab-id active-tab-id))))
+                                   :title title
+                                   :window-id window-id
+                                   :is-active (= tab-id active-tab-id))))
        (push tab process-tabs)
        (cl-incf tab-count)
        (if (gethash url seen-urls)
@@ -244,25 +244,6 @@ TABS must be an alist as returned from `chrome-get-tabs'."
   (setq chrome--process-index (make-hash-table)
         chrome--visible-tabs  (make-hash-table)
         chrome--cached-tabs   (make-hash-table :test 'equal)))
-
-(defvar-local chrome--cached-auth nil)
-
-(defun chrome--machine-url ()
-  (cond ((and chrome-machine-url
-              (string-prefix-p "eppc://" chrome-machine-url))
-         chrome-machine-url)
-        (chrome--cached-auth)
-        (t
-         (or
-          (when-let ((auth (car (auth-source-search :port "eppc"
-                                                    :require '(:port))))
-                     (host   (plist-get auth :host))
-                     (user   (plist-get auth :user))
-                     (secret (plist-get auth :secret)))
-            (when (functionp secret) (setq secret (funcall secret)))
-            (setq chrome--cached-auth
-                  (format "eppc://%s:%s@%s" user secret host)))
-          (error "Missing URL, see chrome-machine-url")))))
 
 (defvar-local chrome--start-time nil)
 (defvar-local chrome--elapsed-time nil)
