@@ -214,10 +214,7 @@ TABS must be an alist as returned from `chrome-get-tabs'."
       (let* ((cached-tab (gethash (cons session tab-id) chrome--cached-tabs))
              (tab
               (if (and cached-tab (chrome-tab-is-deleted cached-tab))
-                  (progn
-                    ;; xxx: for debug ... remove
-                    (message "Hit deleted tab from cache!")
-                    cached-tab)
+                  cached-tab
                 (chrome-tab-create :port port :host host
                                    :session session
                                    :id tab-id :url url
