@@ -5,13 +5,14 @@
 ;;
 ;; All rights reserved
 
-;; Version: 0.5 - 2020-05-10
+;; Modified: 2020-05-18
+;; Version: 0.5
 ;; Author: xristos <xristos@sdf.org>
 ;;      Bas Alberts <bas@anti.computer>
 ;;
 ;; Maintainer: Bas Alberts <bas@anti.computer>
-;; URL: https://github.com/anticomputer/...
-;; Package-Requires: ((emacs "25"))
+;; URL: https://github.com/anticomputer/chrome.el
+;; Package-Requires: ((emacs "25.1"))
 ;; Keywords: comm
 
 ;; Redistribution and use in source and binary forms, with or without
