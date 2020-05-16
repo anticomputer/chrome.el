@@ -37,34 +37,34 @@ See [[#additional-information][Additional Information]] for a list of difference
 To reset the session list you can M-x chrome-reset RET which will purge all
 active sessions from the session list.
 
-To add another chrome devtools session on a different port you can M-x
+To add another Chrome DevTools session on a different port you can M-x
 chrome-connect RET
 
-NOTE: you can connect as many concurrent and independent Chrome Devtools
+NOTE: you can connect as many concurrent and independent Chrome DevTools
 connections sessions as you require, mixing both local and remote Chrome
 instances in a seamless Emacs orchestration experience.
 
-Advanced users may manage the addition and removal of Devtools session via
-the chrome--devtools-session alist, which consists of (port . host) pairs,
+Advanced users may manage the addition and removal of DevTools session via
+the chrome-sessions alist, which consists of (port . host) pairs,
 e.g. '(9222 . "127.0.0.1"). This facilates e.g. user specified functions
 that also manage spawning ephemeral Chrome instances with a managed range of
-Devtools ports.
+DevTools ports.
 
 * Security Warning
 
 Note that anyone with access to this port can both inspect and influence your
 Chrome Session. It may be possible to bypass CORS in certain scenarios and
 this may expose you to security risks. Do not use this on multi-user systems
-or expose Devtools API endpoints in untrusted network environments.
+or expose DevTools API endpoints in untrusted network environments.
 
-You can read more about the Devtools protocol here:
+You can read more about the DevTools protocol here:
 
 https://chromedevtools.github.io/devtools-protocol/
 
 * Additional Information
 
-A list of differences with osa-chrome.el is included below. These stem from
-the underlying APIs (chrome-devtools vs macOS automation).
+A partial list of differences with osa-chrome.el is included below.
+These stem from the underlying APIs (DevTools vs macOS automation).
 
 + When visiting a tab, chrome.el always raises the Chrome window, unlike
   osa-chrome.el where this is up to the user.
@@ -74,11 +74,10 @@ the underlying APIs (chrome-devtools vs macOS automation).
   loads, typically a small fraction of all tabs. osa-chrome.el retrieves
   and is able to control all tabs.
 
-+ chrome.el is only able to show one active tab. This means that when
-  controlling tabs from multiple windows / multiple Chrome instances, some
-  active tabs will not be shown as "active" in Emacs. This issue does not
-  exist in osa-chrome.el which is able to accurately track and display all
-  active tabs.
++ chrome.el is only able to show one active tab per Chrome session. This
+  means that when controlling tabs from multiple windows, some active tabs
+  will not be shown as "active" in Emacs. This issue does not exist in
+  osa-chrome.el which is able to accurately track and display all active tabs.
 
 + chrome.el does not maintain an exact ordering of tabs as displayed in Chrome.
   osa-chrome.el tabs are always displayed in exactly the same order as they are
