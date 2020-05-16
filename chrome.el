@@ -287,12 +287,11 @@ TABS must be an alist as returned from `chrome-get-tabs'."
     (cl-loop
      with active-tabs
      for session being the hash-keys of chrome--session-index
-     for session-tabs = (gethash session chrome--session-index)
-     for tabs         = (cdr session-tabs)
+     for session-tabs = (cdr (gethash session chrome--session-index))
      with line        = 1
      do
      (cl-loop
-      for tab in tabs do
+      for tab in session-tabs do
       ;; Matching
       (if (and (chrome--limit-tab tab)
                (chrome--filter-tab tab))
@@ -641,7 +640,7 @@ with id, url, title keys."
                 (json-read))))
     (cl-loop with count = 0
              for tab-data across data
-             for type = (cdr (assoc 'type tab-data))
+             for type    = (cdr (assoc 'type tab-data))
              for is-page = (equal type "page")
              when is-page do (cl-incf count)
              when is-page collect (list (assoc 'id    tab-data)
@@ -692,7 +691,7 @@ The first tab in the list of tabs is the active one."
   ;; XXX: errors should go here as well
   (chrome-retrieve-tabs))
 
-(defsubst chrome--visit-tab (tab)
+(defsubst chrome--visit (tab)
   (chrome--devtools-do tab "activate"))
 
 (defsubst chrome--view-source (tab)
@@ -919,7 +918,7 @@ This brings Chrome into focus and raises the window that contains the tab."
   (cl-assert (eq major-mode 'chrome-mode) t)
   (when-let ((tab (chrome-current-tab)))
     (chrome--with-timing
-      (chrome--visit-tab tab)
+      (chrome--visit tab)
       (chrome-retrieve-tabs))))
 
 (defun chrome-goto-active ()
