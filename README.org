@@ -1,0 +1,70 @@
+[[https://opensource.org/licenses/BSD-2-Clause][https://img.shields.io/badge/license-BSD-blue.svg]]
+
+chrome.el is a portable Emacs interface to Google Chrome.
+
+#+html:<p align="center"><img src="img/chrome-demo.gif" /></p>
+
+It is forked off of osa-chrome.el (https://github.com/atomontage/osa-chrome)
+which is an Emacs Mac port interface to Google Chrome and relies on Apple
+events as well as Mitsuharu Yamamoto's excellent Emacs mac port.
+
+In contrast, chrome.el only requires access to the Chrome Devtools debugging
+API and is thus fully cross-platform. Its only dependencies are stock Emacs
+and Google Chrome itself.
+
+While this does represent a slight compromise in functionality and flexibility
+compared to the capabilities of the OSA enabled version of this code base, it
+is sufficient for a variety of daily workflow use cases and brings
+osa-chrome.el's excellent narrowing capabilities to a much wider set of Chrome
+users.
+
+Examples include:
+
++ Controlling multiple remote Chrome instances that e.g. run inside a VM from Emacs
++ Controlling multiple independent Chrome instances spawned from ephemeral
+  profile managers such as https://github.com/atomontage/chrome-private
+
+This fork/port aims to retain basic feature parity with osa-chrome.el where
+possible without introducing additional dependencies beyond the Devtools API
+access.
+
+* Getting Started
+
+1) google-chrome --remote-debugging-port=9222
+2) M-x chrome RET
+3) M-x chrome-devtools-connect RET localhost RET 9222 RET
+
+To reset the session list you can M-x chrome-devtools-reset RET which
+will purge all active sessions from the session list.
+
+NOTE: you can connect as many concurrent and independent Chrome Devtools
+connections sessions as you require, mixing both local and remote Chrome
+instances in a seamless Emacs orchestration experience.
+
+Advanced users may manage the addition and removal of Devtools session via
+the chrome--devtools-session alist, which consists of (port . host) pairs,
+e.g. '(9222 . "127.0.0.1"). This facilates e.g. user specified functions
+that also manage spawning ephemeral Chrome instances with a managed range of
+Devtools ports.
+
+* Security Warning
+
+Note that anyone with access to this port can both inspect and influence your
+Chrome Session. It may be possible to bypass CORS in certain scenarios and
+this may expose you to security risks. Do not use this on multi-user systems
+or expose Devtools API endpoints in untrusted network environments.
+
+You can read more about the Devtools protocol here:
+
+https://chromedevtools.github.io/devtools-protocol/
+
+* Additional Information
+
+For further information, much of the original ose-chrome.el mode logic wrt
+filtering, use cases and methodoloy holds, and I recommend you read the
+original documentation for osa-chrome.el:
+
+https://github.com/atomontage/osa-chrome/
+
+Where possible chrome.el will maintain basic feature parity with
+osa-chrome.el.
