@@ -124,23 +124,34 @@ This can be toggled by:
  `chrome-limit-marked'
  `chrome-limit-dup'
  `chrome-limit-active'
- `chrome-limit-port-host'.")
+ `chrome-limit-session'.")
 
-(defvar chrome-auto-retrieve nil
-  "If non-nil, retrieve all tabs after every operation.
+(defvar chrome-sessions (list (cons 9222 "127.0.0.1"))
+  "A list of DevTools sessions which are pairs of (port . host).
+
+You can enable a DevTools remote debugging port for Chrome with:
+
+--remote-debugging-port=9222
+
+Note that anyone who can send direct, or indirect, requests to this
+port can drive, inspect, and otherwise influence your Chrome session.")
+
+(defvar chrome-auto-retrieve t
+  "If non-nil, retrieve all tabs after certain operations.
 
 Note that every retrieval recreates tab state in Emacs and thus discards
 what was previously there (except filter and limit).
-Currently this only applies to `chrome-visit-tab'.
+Currently this only applies to `chrome-connect'.
 
-Delete operations always trigger a tab retrieval post-operation.")
+All other operations always trigger a tab retrieval post-operation.")
 
 (cl-defstruct (chrome-tab
                (:constructor chrome-tab-create)
                (:copier nil))
-  (port-host nil :read-only t)    ; (PORT . HOST) of Chrome instance that contains this tab
+  (port      nil :read-only t)    ; Port of Chrome instance that contains this tab
+  (host      nil :read-only t)    ; Host of Chrome instance that contains this tab
+  (session   nil :read-only t)    ; DevTools session of this tab, currently (port . host)
   (id        nil :read-only t)    ; Unique id of tab in this Chrome instance
-  (window-id nil :read-only t)    ; Unique id of window that contains this tab
   (url       nil :read-only t)    ; URL of tab
   (title     nil :read-only t)    ; Title of tab
   is-active                       ; Is tab selected in Chrome buffer?
@@ -154,73 +165,63 @@ Delete operations always trigger a tab retrieval post-operation.")
 ;;;
 
 
-(defvar-local chrome--process-index nil
+(defvar-local chrome--session-index nil
   "Hash table that contains indexed tabs (chrome-tab instances).
 
-Keys are pairs of (PORT . HOST).
+Keys are sessions, conses of form (post . host).
 Values are conses of form:
 
-  ((tab-count . window-count) tab-list)
-
-Tabs in tab-list are ordered as they appear in Chrome:
-Older tabs before newer tabs.")
+  (tab-count . tab-list)")
 
 (defvar-local chrome--cached-tabs nil
   "Hash table that contains indexed tabs (chrome-tab instances).
 
-Keys are conses of form: (port-host . tab-id)
+Keys are conses of form: (session . tab-id) where session is
+a cons of form (port . host)
+
 Values are chrome-tab instances.")
 
 (defun chrome--reindex-tabs (tabs)
-  "Index TABS into `chrome--process-index' and `chrome--cached-tabs'.
+  "Index TABS into `chrome--session-index' and `chrome--cached-tabs'.
 TABS must be an alist as returned from `chrome-get-tabs'."
-  (clrhash chrome--process-index)
+  (clrhash chrome--session-index)
   (clrhash chrome--cached-tabs)
   (cl-loop
-   for (port-host . data) in (cdr tabs)
-   for windows            = (aref data 0)
-   for active-tab-windows = (aref data 1)
-   for tab-id-windows     = (aref (aref data 2) 0)
-   for url-windows        = (aref (aref data 2) 1)
-   for title-windows      = (aref (aref data 2) 2)
-   for process-tabs       = nil
-   for tab-count          = 0
-   for window-count       = 0
-   with seen-urls         = (make-hash-table :test 'equal)
+   for (session . tab-data) in tabs
+   for port         = (car session)
+   for host         = (cdr session)
+   for tab-count    = 0
+   for process-tabs = nil
+   with seen-urls   = (make-hash-table :test 'equal)
    do
    (cl-loop
-    for window-id     across windows
-    for active-tab-id across active-tab-windows
-    for tab-ids       across tab-id-windows
-    for urls          across url-windows
-    for titles        across title-windows do
-    (cl-incf window-count)
-    (cl-loop
-     for tab-id across tab-ids
-     for url    across urls
-     for title  across titles do
-     (let ((tab (chrome-tab-create :port-host port-host :id tab-id :url url
-                                   :title title
-                                   :window-id window-id
-                                   :is-active (string= tab-id active-tab-id))))
-       (push tab process-tabs)
-       (cl-incf tab-count)
-       (if (gethash url seen-urls)
-           (setf (chrome-tab-is-duplicate tab) t)
-         (puthash url t seen-urls))
-       (puthash (cons port-host tab-id) tab chrome--cached-tabs))))
-   ;; A hash table indexed by port-host containing all tabs
-   (setf (gethash port-host chrome--process-index)
-         (cons (cons tab-count window-count)
-               (nreverse process-tabs)))))
+    for index from 0
+    for tab in tab-data
+    for tab-id = (alist-get 'id tab)
+    for url    = (alist-get 'url tab)
+    for title  = (alist-get 'title tab) do
+    (let ((tab (chrome-tab-create :port port :host host
+                                  :session session
+                                  :id tab-id :url url
+                                  :title title
+                                  :is-active (= index 0))))
+      (push tab process-tabs)
+      (if (gethash url seen-urls)
+          (setf (chrome-tab-is-duplicate tab) t)
+        (puthash url t seen-urls))
+      (puthash (cons session tab-id) tab chrome--cached-tabs))
+    finally (cl-incf tab-count index))
+   ;; A hash table indexed by session containing all tabs
+   (setf (gethash session chrome--session-index)
+         (cons tab-count (nreverse process-tabs)))))
 
 (defvar-local chrome--visible-tabs nil)
 (defvar-local chrome--marked-tabs 0)
 
 (defun chrome--init-caches ()
-  (setq chrome--process-index (make-hash-table)
-        chrome--visible-tabs  (make-hash-table)
-        chrome--cached-tabs   (make-hash-table :test 'equal)))
+  (setq chrome--session-index (make-hash-table :test 'equal)
+        chrome--cached-tabs   (make-hash-table :test 'equal)
+        chrome--visible-tabs  (make-hash-table)))
 
 (defvar-local chrome--start-time nil)
 (defvar-local chrome--elapsed-time nil)
@@ -249,20 +250,6 @@ TABS must be an alist as returned from `chrome-get-tabs'."
 (defun chrome--message (format-string &rest args)
   (let ((message-truncate-lines t))
     (message "chrome: %s" (apply #'format format-string args))))
-
-(cl-defmacro chrome--check-error ((res) call &body body)
-  (declare (indent defun))
-  (let ((err      (cl-gensym))
-        (err-data (cl-gensym)))
-    `(let* ((strict-unpacking t)
-            (,res ,call))
-       (if-let ((,err       (cdr (assoc "error" ,res))))
-           (let ((,err-data (cdr (assoc "error-data" ,res))))
-             (chrome--message "%s%s" ,err
-                              (if ,err-data
-                                  (format " [%s]" ,err-data)
-                                "")))
-         ,@body))))
 
 
 ;;;
@@ -299,10 +286,11 @@ TABS must be an alist as returned from `chrome-get-tabs'."
   (chrome--with-timing
     (cl-loop
      with active-tabs
-     for port-host being the hash-keys of chrome--process-index
+     for session being the hash-keys of chrome--session-index
+     for session-tabs = (gethash session chrome--session-index)
+     for tabs         = (cdr session-tabs)
      with line        = 1
-     for process-tabs = (gethash port-host chrome--process-index)
-     for tabs         = (cdr process-tabs) do
+     do
      (cl-loop
       for tab in tabs do
       ;; Matching
@@ -323,7 +311,7 @@ TABS must be an alist as returned from `chrome-get-tabs'."
      (when (> line 1)
        ;; Previously selected tab if it's still visible and not deleted
        (if-let ((last-tab chrome--last-tab)
-                (last-tab (gethash (cons (chrome-tab-port-host last-tab)
+                (last-tab (gethash (cons (chrome-tab-session last-tab)
                                          (chrome-tab-id  last-tab))
                                    chrome--cached-tabs))
                 (last-line (chrome-tab-line last-tab)))
@@ -349,16 +337,18 @@ TABS must be an alist as returned from `chrome-get-tabs'."
   "Generate string for tab view header line."
   (let* ((total-tabs   (hash-table-count chrome--cached-tabs))
          (visible-tabs (hash-table-count chrome--visible-tabs))
-         (total-procs  (hash-table-count chrome--process-index))
+         (total-procs  (hash-table-count chrome--session-index))
          (visible-procs
           (if (= visible-tabs total-tabs) total-procs
-            (cl-loop with result and count = 0
-                     for tab in (hash-table-values chrome--visible-tabs)
-                     for port-host = (chrome-tab-port-host tab)
-                     unless (memq port-host result)
-                     do (push port-host result) (cl-incf count)
-                     when (= count total-procs) return count
-                     finally return count))))
+            (cl-loop
+             for tab in (hash-table-values chrome--visible-tabs)
+             with result = (make-hash-table :test 'equal)
+             with count  = 0
+             for session = (chrome-tab-session tab)
+             unless (gethash session result)
+             do (puthash session t result) (cl-incf count)
+             when (= count total-procs) return count
+             finally return count))))
     (cl-flet ((align (width str)
                      (let ((spec (format "%%%ds" width)))
                        (format spec str)))
@@ -385,7 +375,7 @@ TABS must be an alist as returned from `chrome-get-tabs'."
                  (:mark   "mark")
                  (:dup    "dup")
                  (:active "active")
-                 (other other)))
+                 (other (format "%s:%d" (cdr other) (car other)))))
        " "
        (when chrome-show-timing
          (propertize (format " %.4fs " chrome--elapsed-time)
@@ -452,7 +442,7 @@ Otherwise, a new string is generated and returned by calling
     (define-key map (kbd "/")         prefix-map)
     (define-key prefix-map (kbd "m") 'chrome-limit-marked)
     (define-key prefix-map (kbd "d") 'chrome-limit-dup)
-    (define-key prefix-map (kbd "'") 'chrome-limit-port-host)
+    (define-key prefix-map (kbd "'") 'chrome-limit-session)
     (define-key prefix-map (kbd "a") 'chrome-limit-active)
     (define-key prefix-map (kbd "/") 'chrome-limit-none)
     map)
@@ -526,9 +516,9 @@ Type \\[chrome-limit-dup] to only show duplicate tabs (by URL).
 
 Type \\[chrome-limit-active] to only show active tabs (selected in Chrome).
 
-Type \\[chrome-limit-port-host] to only show tabs belonging to a specific Chrome
-instance by PORT-HOST. Since you can't directly input the PORT-HOST,
-by repeatedly typing \\[chrome-limit-port-host] you can cycle through all PORT-HOSTs.
+Type \\[chrome-limit-session] to only show tabs belonging to a specific Chrome
+session. Since you can't directly input the session, by repeatedly typing \\[chrome-limit-session]
+you can cycle through all sessions.
 
 Type \\[chrome-limit-none] to remove the current limit and show all tabs.
 
@@ -604,14 +594,14 @@ It must not span more than one line but it may contain text properties."
       str)))
 
 (defun chrome-limit-tab (tab)
-  "Limits TAB by port-host, duplicate, marked or active status.
+  "Limits TAB by session, duplicate, marked or active status.
 Limiting operation depends on `chrome-default-limit'."
   (cl-case chrome-default-limit
     (:all    t)
     (:mark   (chrome-tab-is-marked tab))
     (:dup    (chrome-tab-is-duplicate tab))
     (:active (chrome-tab-is-active tab))
-    (t (equal chrome-default-limit (chrome-tab-port-host tab)))))
+    (t (equal chrome-default-limit (chrome-tab-session tab)))))
 
 (defun chrome-filter-tab (tab)
   "Filters TAB using a case-insensitive match on either URL or title."
@@ -635,141 +625,79 @@ Limiting operation depends on `chrome-default-limit'."
 
 
 ;;;
-;;; Devtools API versions of the chrome tab functions
+;;; DevTools API
 ;;;
 
-;; a list of chrome sessions with remote debugging ports
-(defvar chrome--devtools-sessions '((9222 . "127.0.0.1"))
-  "A list of devtools sessions which are pairs of (port . host).
 
-You can enable a devtools remote debugging port for Chrome with:
+(defun chrome--get-tabs (port host)
+  "Get tab state from a Chrome DevTools endpoint at HOST:PORT.
 
---remote-debugging-port=9222
-
-Note that anyone who can send direct, or indirect, requests to this
-localhost port can drive, inspect, and otherwise influence your Chrome
-session.")
-
-(defun chrome--devtools-default-session ()
-  (car chrome--devtools-sessions))
-
-(defun chrome--devtools-get-tabs (host port)
-  "Pull the current tab state from a devtools remote debugger at HOST:PORT."
+Return (tab-count . tab-list) where each tab in tab-list is an alist
+with id, url, title keys."
   ;; xxx: needs error checking
-  (with-temp-buffer
-    (url-insert-file-contents
-     (chrome-devtools-uri :verb "list"
-                          :host host
-                          :port port))
-    (let ((data (json-read)))
-      (cl-loop for tab-data across data
-               for tab-idx from 0
-               when (equal (cdr (assoc 'type tab-data)) "page")
-               collect
-               (list (cdr (assoc 'id tab-data))
-                     (cdr (assoc 'url tab-data))
-                     (cdr (assoc 'title tab-data)))
-               into devtabs
-               finally return (cons tab-idx devtabs)))))
+  (let ((data (with-temp-buffer
+                (url-insert-file-contents
+                 (chrome-devtools-uri :verb "list" :host host :port port))
+                (json-read))))
+    (cl-loop with count = 0
+             for tab-data across data
+             for type = (cdr (assoc 'type tab-data))
+             for is-page = (equal type "page")
+             when is-page do (cl-incf count)
+             when is-page collect (list (assoc 'id    tab-data)
+                                        (assoc 'url   tab-data)
+                                        (assoc 'title tab-data))
+             into tabs
+             finally return (cons count tabs))))
 
 (cl-defun chrome-devtools-uri (&key verb id (host "127.0.0.1") (port 9222))
-  "Return a devtools remote debugging VERB/ID uri."
-  (let* ((action
-          (if id
-              (format "%s/%s" verb id)
-            verb))
-         (uri (format "http://%s:%d/json/%s" host port action)))
-    uri))
+  "Return a DevTools remote debugging VERB/ID uri."
+  (let* ((action (if id
+                     (format "%s/%s" verb id)
+                   verb)))
+    (format "http://%s:%d/json/%s" host port action)))
 
 (defun chrome-get-tabs ()
   "Return a record (alist) containing tab information.
 
-The alist contains (port-host . [window-ids, active-tab-ids, tabs]) pairs,
-where:
+The alist contains (session . tabs) pairs, where:
 
-port-host is a pair of (port . host)
+session is the currently active DevTools session, a cons of form (port . host)
+tabs is a list of tabs, where each tab is an alist with id, url, title keys.
 
-window-ids and active-tab-ids are vectors of length 1, and port
-represents the currently active devtools debug port.
+The first tab in the list of tabs is the active one."
+  (cl-loop with tab-count = 0
+           for session-count from 0
+           for session in chrome-sessions
+           for port = (car session)
+           for host = (cdr session)
+           for (cnt . tabs) = (chrome--get-tabs port host)
+           do (cl-incf tab-count cnt)
+           collect (cons session tabs)
+           finally (message "Retrieved %d tabs from %d sessions"
+                            tab-count session-count)))
 
-tabs is a vector of 3 elements: [[tab-ids], [urls], [titles]] where
-tab-ids, urls and titles are vectors of same length.
-"
+(defsubst chrome--devtools-do (tab verb)
+  (with-temp-buffer
+    (url-insert-file-contents
+     (chrome-devtools-uri
+      :verb verb
+      :id   (chrome-tab-id tab)
+      :host (chrome-tab-host tab)
+      :port (chrome-tab-port tab)))))
 
-  (let ((tab-record '()))
-    (dolist (session chrome--devtools-sessions)
-      ;; we treat tabs for a single devtools host:port as belonging to a virtual window with id 0
-      (let* ((port (car session))
-             (host (cdr session))
-             (devtools-window-id 0)
-             (tab-collect (chrome--devtools-get-tabs host port))
-             (obj-count (car tab-collect))
-             (devtabs (cdr tab-collect))
-             (window-ids (vector devtools-window-id))
-             ;; the first tab in our tabs list is the only active tab we can determine, so use that
-             (active-tab-ids (vector (caar devtabs)))
-             (tab-ids (vconcat (mapcar #'(lambda (tab) (car tab)) devtabs)))
-             (tab-urls (vconcat (mapcar #'(lambda (tab) (cadr tab)) devtabs)))
-             (tab-titles (vconcat (mapcar #'(lambda (tab) (caddr tab)) devtabs)))
-             ;; we pretend that we have a single window of id 0 that contains everything
-             (tabs-vect (vector
-                         (vector tab-ids)
-                         (vector tab-urls)
-                         (vector tab-titles))))
-        (message "Fetched %d tabs from devtools://%s:%d" (length devtabs) host port)
-        ;; we use the devtools port as an identifier, which is expected to be a string in the indexer
-        (cl-pushnew (cons (cons port host)
-                          (vector window-ids active-tab-ids tabs-vect))
-                    tab-record)))
-    (cons :reco tab-record)))
+(defsubst chrome--delete (tab)
+  (chrome--devtools-do tab "close")
+  ;; XXX: DevTools sometimes responds before the tab is gone
+  ;; XXX: errors should go here as well
+  (chrome-retrieve-tabs))
 
-(defun chrome--devtools-apply-verb (host port tab-ids verb)
-  (mapcar #'(lambda (id)
-              (with-temp-buffer
-                (url-insert-file-contents
-                 (chrome-devtools-uri
-                  :verb verb
-                  :id id
-                  :host host
-                  :port port))))
-          ;; this is a vector of tab-id
-          tab-ids)
-  ;; xxx: errors are returned as an alist with ("error" . xxx) ("error-data" . xxx) pairs
-  nil)
+(defsubst chrome--visit-tab (tab)
+  (chrome--devtools-do tab "activate"))
 
-(defun chrome--devtools-delete (host port tab-vect)
-  (chrome--devtools-apply-verb host port tab-vect "close")
-  ;; xxx: devtools sometimes responds before the tab is gone
-  (chrome-retrieve-tabs)
-  ;; xxx: errors should go here as well
-  (list (cons "count" (length tab-vect))))
-
-(defsubst chrome--delete-multi (port-host tab-ids)
-  (let ((tab-vect (cdadr tab-ids)))
-    (chrome--devtools-delete
-     (cdr port-host)
-     (car port-host)
-     tab-vect)))
-
-(defsubst chrome--visit-tab-multi (port-host window-id tab-id noraise)
-  ;; we ignore noraise and window-id, not needed for us yet
-  (chrome--devtools-apply-verb
-   (cdr port-host)
-   (car port-host)
-   (vector tab-id)
-   "activate"))
-
-(defun chrome--tab-from-id (port-host tab-id)
-  (gethash (cons port-host tab-id) chrome--cached-tabs))
-
-(defsubst chrome--view-source-multi (port-host window-id tab-id)
-  (let ((tab (chrome--tab-from-id port-host tab-id)))
-    (when tab
-      (chrome--devtools-apply-verb
-       (cdr port-host)
-       (car port-host)
-       (vector nil)
-       (format "new?view-source:%s" (chrome-tab-url tab))))))
+(defsubst chrome--view-source (tab)
+  (chrome--devtools-do
+   tab (format "new?view-source:%s" (chrome-tab-url tab))))
 
 ;;;
 ;;; Interactive
@@ -779,19 +707,24 @@ tab-ids, urls and titles are vectors of same length.
   "Reset the session state."
   (interactive)
   (cl-assert (eq major-mode 'chrome-mode) t)
-  (setq chrome--devtools-sessions '())
+  (setq-local chrome-sessions
+              (default-value 'chrome-sessions))
   (chrome-retrieve-tabs)
-  (message "Reset all devtools sessions"))
+  (message "All DevTools sessions reset"))
 
 (defun chrome-connect ()
-  "Add a session to the devtools session state."
+  "Add a session to the DevTools session state."
   (interactive)
   (cl-assert (eq major-mode 'chrome-mode) t)
-  (let ((host (read-from-minibuffer "host: " "127.0.0.1"))
-        (port (string-to-number (read-from-minibuffer "port: " "9222"))))
-    (cl-pushnew (cons port host) chrome--devtools-sessions)
-    (message "Added devtools session %s:%d" host port)
-    (chrome-retrieve-tabs)))
+  (let* ((host    (read-from-minibuffer "Host: " "127.0.0.1"))
+         (port    (string-to-number (read-from-minibuffer "Port: " "9222")))
+         (session (cons port host)))
+    (if (member session chrome-sessions)
+        (message "DevTools session %s:%d already exists" host port)
+      (setq-local chrome-sessions (cons session chrome-sessions))
+      (message "Added DevTools session %s:%d" host port)
+      (when chrome-auto-retrieve
+        (chrome-retrieve-tabs)))))
 
 (defun chrome-toggle-timing ()
   "Toggle timing information on the header line."
@@ -818,20 +751,20 @@ tab-ids, urls and titles are vectors of same length.
   (setq-local chrome-default-limit :mark)
   (chrome--filter-tabs))
 
-(defun chrome-limit-port-host ()
-  "Only show tabs belonging to a specific Chrome instance, by PORT-HOST.
-Since you can't directly input the PORT-HOST, by repeatedly invoking this command
-you can cycle through all PORT-HOSTs."
+(defun chrome-limit-session ()
+  "Only show tabs belonging to a specific Chrome session.
+Since you can't directly input the session, by repeatedly invoking this command
+you can cycle through all sessions."
   (interactive)
   (cl-assert (eq major-mode 'chrome-mode) t)
   (let* ((limit chrome-default-limit)
-         (port-hosts (cl-loop for port-host in (hash-table-keys chrome--process-index)
-                              vconcat (list port-host)))
-         (nport-hosts (length port-hosts)))
-    (setq-local chrome-default-limit
-                (aref port-hosts (if-let ((pos (cl-position limit port-hosts)))
-                                     (mod (1+ pos) nport-hosts)
-                                   0)))
+         (sessions  (vconcat (hash-table-keys chrome--session-index)))
+         (nsessions (length sessions)))
+    (setq-local
+     chrome-default-limit
+     (aref sessions (if-let ((pos (cl-position limit sessions :test 'equal)))
+                        (mod (1+ pos) nsessions)
+                      0)))
     (chrome--filter-tabs)))
 
 (defun chrome-limit-dup ()
@@ -883,22 +816,15 @@ and limit."
   (setq chrome--active-filter nil)
   (chrome--filter-tabs))
 
-
 (defun chrome-delete-tab ()
   "Delete tab at point."
   (interactive)
   (cl-assert (eq major-mode 'chrome-mode) t)
   (when-let ((tab (chrome-current-tab)))
-    (let* ((port-host (chrome-tab-port-host tab))
-           (tab-id    (chrome-tab-id tab))
-           (window-id (chrome-tab-window-id tab))
-           (tab-ids   (list :reco (cons window-id (vector tab-id)))))
-      (chrome--with-timing
-        (chrome--check-error (ret)
-          (chrome--delete-multi port-host tab-ids)
-          (forward-line)
-          (chrome-retrieve-tabs)
-          (message "Deleted %d tabs" (cdr (assoc "count" ret))))))))
+    (chrome--with-timing
+      (chrome--delete tab)
+      (forward-line)
+      (chrome-retrieve-tabs))))
 
 (defun chrome-delete-marked-tabs ()
   "Delete all marked tabs."
@@ -907,23 +833,15 @@ and limit."
   (when (> chrome--marked-tabs 0)
     (chrome--with-timing
       (cl-loop
-       for port-host being the hash-keys of chrome--process-index
-       for process-tabs = (cdr (gethash port-host chrome--process-index))
-       for grouped-tabs = nil do
-       (cl-loop for tab in process-tabs
-                when (chrome-tab-is-marked tab) do
-                (let ((window-id (chrome-tab-window-id tab)))
-                  (push (chrome-tab-id tab)
-                        (alist-get window-id grouped-tabs)))
-                finally do
-                (setq grouped-tabs
-                      (cons :reco
-                            (mapcar (lambda (c) (cons (car c) (vconcat (cdr c))))
-                                    grouped-tabs)))
-                (chrome--check-error (ret)
-                  (chrome--delete-multi port-host grouped-tabs)
-                  (chrome-retrieve-tabs)
-                  (message "Deleted %d tabs" (cdr (assoc "count" ret)))))))))
+       for session being the hash-keys of chrome--session-index
+       for session-tabs = (cdr (gethash session chrome--session-index)) do
+       (cl-loop
+        for tab in session-tabs
+        when (chrome-tab-is-marked tab)
+        collect tab into marked-tabs
+        finally do
+        (cl-loop for tab in marked-tabs do
+                 (chrome--devtools-do tab "close")))))))
 
 (defun chrome-mark-tab (&optional tab)
   "Mark tab at point."
@@ -984,68 +902,25 @@ If there is a region, only unmark tabs in region."
   (cl-assert (eq major-mode 'chrome-mode) t)
   (chrome-do-visible-tabs #'chrome-unmark-tab))
 
-
 (defun chrome-view-source ()
   "View HTML source of tab at point."
   (interactive)
   (cl-assert (eq major-mode 'chrome-mode) t)
   (when-let ((tab (chrome-current-tab)))
     (chrome--with-timing
-      (let* ((strict-unpacking t)
-             (window-id (chrome-tab-window-id tab))
-             (tab-id    (chrome-tab-id tab))
-             (port-host (chrome-tab-port-host tab)))
-        (chrome--check-error (ret)
-          (chrome--view-source-multi port-host window-id tab-id)
-          ;; (let ((buf (get-buffer-create "*chrome-source*")))
-          ;;   (with-current-buffer buf
-          ;;     (erase-buffer)
-          ;;     (insert (cdr (assoc "html" ret)))
-          ;;     (goto-char (point-min)))
-          ;;   (display-buffer buf))
-          )))
+      (let* ((strict-unpacking t))
+        (chrome--view-source tab)))
     (force-mode-line-update)))
 
-(defun chrome-visit-tab (&optional noraise)
+(defun chrome-visit-tab ()
   "Switch to tab at point in Chrome.
-This brings Chrome into focus and raises the window that contains the tab.
-With a prefix argument, switch to the tab in Chrome but keep input focus in
-Emacs and do not raise Chrome window."
-  (interactive "P")
+This brings Chrome into focus and raises the window that contains the tab."
+  (interactive)
   (cl-assert (eq major-mode 'chrome-mode) t)
   (when-let ((tab (chrome-current-tab)))
     (chrome--with-timing
-      (let* ((window-id (chrome-tab-window-id tab))
-             (tab-id    (chrome-tab-id tab))
-             (port-host (chrome-tab-port-host tab)))
-        (chrome--check-error (ret)
-          (chrome--visit-tab-multi port-host window-id tab-id noraise)
-          (when-let ((warn (cdr (assoc "warn" ret))))
-            (chrome--message "%s" warn))
-          (if chrome-auto-retrieve (chrome-retrieve-tabs)
-            ;; Need to manually mark the current tab as active and the
-            ;; previously active tab in this window as inactive then render
-            ;; both of them.
-            (let ((pos (point))
-                  (inhibit-read-only t))
-              ;; Mark current tab as active and render it.
-              (setf (chrome-tab-is-active tab) t)
-              (chrome--render-tab tab t)
-              ;; Search for previously active tab in this window, mark it as
-              ;; inactive and if it's visible render it.
-              (cl-loop for tab in (cdr (gethash port-host chrome--process-index))
-                       for tid = (chrome-tab-id tab)
-                       for wid = (chrome-tab-window-id tab) do
-                       (when (and (= wid window-id)
-                                  ;; Skip currently active tab
-                                  (not (string= tid tab-id))
-                                  (chrome-tab-is-active tab))
-                         (setf (chrome-tab-is-active tab) nil)
-                         (when (gethash (chrome-tab-line tab)
-                                        chrome--visible-tabs)
-                           (chrome--render-tab tab))
-                         (cl-return)))
-              (goto-char pos))))))))
+      (chrome--visit-tab tab)
+      (chrome-retrieve-tabs))))
 
 (defun chrome-goto-active ()
   "Move point to the next active tab.
