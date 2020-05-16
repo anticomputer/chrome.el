@@ -90,17 +90,6 @@
   "Name to use when retrieving application instance reference.
 Change this if you are using Google Chrome Canary.")
 
-(defvar chrome-single-instance nil
-  "If non-nil, get all tabs from all windows from a single Chrome instance.
-This is the simplest and most common scenario requiring no extra
-configuration, but in the case where multiple Chrome instances are running,
-it is not possible to choose which one will be used.
-
-If nil, get all tabs from all windows belonging to all currently running
-Chrome instances. You need to configure your devtools sessions data
-accordingly for this.")
-
-
 (defvar chrome-render-function #'chrome-render-tab
   "Function that renders a tab into a string for display.
 
@@ -667,13 +656,11 @@ Limiting operation depends on `chrome-default-limit'."
 
 ;; a list of chrome sessions with remote debugging ports
 (defvar chrome--devtools-sessions '()
-  "A list of devtools sessions.
+  "A list of devtools sessions which are pairs of (port . host).
 
 You can enable a devtools remote debugging port for Chrome with:
 
 --remote-debugging-port=9222
-
-In single mode, the car of this list is presumed to be the desired session.
 
 Note that anyone who can send direct, or indirect, requests to this
 localhost port can drive, inspect, and otherwise influence your Chrome
@@ -773,16 +760,6 @@ tab-ids, urls and titles are vectors of same length.
   ;; xxx: errors should go here as well
   (list (cons "count" (length tab-vect))))
 
-(defsubst chrome--delete-single (tab-ids)
-  ;; the head of the session alist is the default session
-  (let ((port (car (chrome--devtools-default-session)))
-        (host (cdr (chrome--devtools-default-session)))
-        (tab-vect (cdadr tab-ids)))
-    (chrome--devtools-delete
-     host
-     port
-     tab-vect)))
-
 (defsubst chrome--delete-multi (host-port tab-ids)
   (pp host-port)
   (destructuring-bind (host port) (split-string host-port ":" t " .*")
@@ -791,16 +768,6 @@ tab-ids, urls and titles are vectors of same length.
        host
        (string-to-number port)
        tab-vect))))
-
-(defsubst chrome--visit-tab-single (window-id tab-id noraise)
-  ;; we ignore noraise and window-id, not needed for us
-  (let ((host (cdr (chrome--devtools-default-session)))
-        (port (car (chrome--devtools-default-session))))
-    (chrome--devtools-apply-verb
-     host
-     port
-     (vector tab-id)
-     "activate")))
 
 (defsubst chrome--visit-tab-multi (host-port window-id tab-id noraise)
   ;; we ignore noraise and window-id, not needed for us
@@ -813,17 +780,6 @@ tab-ids, urls and titles are vectors of same length.
 
 (defun chrome--tab-from-id (host-port tab-id)
   (gethash (cons host-port tab-id) chrome--cached-tabs))
-
-(defsubst chrome--view-source-single (window-id tab-id)
-  (let* ((host (cdr (chrome--devtools-default-session)))
-         (port (car (chrome--devtools-default-session)))
-         (tab (chrome--tab-from-id (format "%s:%d" host port) tab-id)))
-    (when tab
-      (chrome--devtools-apply-verb
-       host
-       port
-       (vector nil)
-       (format "new?view-source:%s" (chrome-tab-url tab))))))
 
 (defsubst chrome--view-source-multi (host-port window-id tab-id)
   (destructuring-bind (host port) (split-string host-port ":" t " .*")
@@ -848,13 +804,9 @@ tab-ids, urls and titles are vectors of same length.
   (message "Reset all devtools sessions"))
 
 (defun chrome-devtools-connect ()
-  "Add a session to the devtools session state.
-
-This implies you want to enable multi mode."
+  "Add a session to the devtools session state."
   (interactive)
   (cl-assert (eq major-mode 'chrome-mode) t)
-  (when chrome-single-instance
-    (setq chrome-single-instance nil))
   (let ((host (read-from-minibuffer "host: " "127.0.0.1"))
         (port (string-to-number (read-from-minibuffer "port: " "9222"))))
     (cl-pushnew (cons port host) chrome--devtools-sessions)
@@ -963,9 +915,7 @@ and limit."
            (tab-ids   (list :reco (cons window-id (vector tab-id)))))
       (chrome--with-timing
         (chrome--check-error (ret)
-          (if chrome-single-instance
-              (chrome--delete-single tab-ids)
-            (chrome--delete-multi host-port tab-ids))
+          (chrome--delete-multi host-port tab-ids)
           (forward-line)
           (chrome-retrieve-tabs)
           (message "Deleted %d tabs" (cdr (assoc "count" ret))))))))
@@ -991,9 +941,7 @@ and limit."
                             (mapcar (lambda (c) (cons (car c) (vconcat (cdr c))))
                                     grouped-tabs)))
                 (chrome--check-error (ret)
-                  (if chrome-single-instance
-                      (chrome--delete-single grouped-tabs)
-                    (chrome--delete-multi host-port grouped-tabs))
+                  (chrome--delete-multi host-port grouped-tabs)
                   (chrome-retrieve-tabs)
                   (message "Deleted %d tabs" (cdr (assoc "count" ret)))))))))
 
@@ -1068,9 +1016,7 @@ If there is a region, only unmark tabs in region."
              (tab-id    (chrome-tab-id tab))
              (host-port (chrome-tab-host-port tab)))
         (chrome--check-error (ret)
-          (if chrome-single-instance
-              (chrome--view-source-single window-id tab-id)
-            (chrome--view-source-multi host-port window-id tab-id))
+          (chrome--view-source-multi host-port window-id tab-id)
           ;; (let ((buf (get-buffer-create "*chrome-source*")))
           ;;   (with-current-buffer buf
           ;;     (erase-buffer)
@@ -1093,9 +1039,7 @@ Emacs and do not raise Chrome window."
              (tab-id    (chrome-tab-id tab))
              (host-port (chrome-tab-host-port tab)))
         (chrome--check-error (ret)
-          (if chrome-single-instance
-              (chrome--visit-tab-single window-id tab-id noraise)
-            (chrome--visit-tab-multi host-port window-id tab-id noraise))
+          (chrome--visit-tab-multi host-port window-id tab-id noraise)
           (when-let ((warn (cdr (assoc "warn" ret))))
             (chrome--message "%s" warn))
           (if chrome-auto-retrieve (chrome-retrieve-tabs)
