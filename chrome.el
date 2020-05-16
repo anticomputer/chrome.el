@@ -751,7 +751,7 @@ tab-ids, urls and titles are vectors of same length.
 
 (defun chrome--devtools-apply-verb (host port tab-ids verb)
   ;; xxx: ports should be unique identifiers for sessions
-  (let ((host (cdr (assoc port (chrome--devtools-get-sessions)))))
+  (let ((host (cdr (assoc port chrome--devtools-sessions))))
     (mapcar #'(lambda (id)
                 (with-temp-buffer
                   (url-insert-file-contents
