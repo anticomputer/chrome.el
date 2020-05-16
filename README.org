@@ -27,7 +27,7 @@ Examples include:
 This fork/port aims to retain basic feature parity with osa-chrome.el where
 possible without introducing additional dependencies beyond DevTools API access.
 
-See [[Additional Information]] for a list of differences with osa-chrome.el.
+See [[#additional-information][Additional Information]] for a list of differences with osa-chrome.el.
 
 * Getting Started
 
