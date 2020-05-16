@@ -666,7 +666,7 @@ Limiting operation depends on `chrome-default-limit'."
 ;;;
 
 ;; a list of chrome sessions with remote debugging ports
-(defvar chrome--devtools-sessions '((9222 . "127.0.0.1"))
+(defvar chrome--devtools-sessions '()
   "A list of devtools sessions.
 
 You can enable a devtools remote debugging port for Chrome with:
@@ -838,6 +838,14 @@ tab-ids, urls and titles are vectors of same length.
 ;;;
 ;;; Interactive
 ;;;
+
+(defun chrome-devtools-reset ()
+  "Reset the session state."
+  (interactive)
+  (cl-assert (eq major-mode 'chrome-mode) t)
+  (setq chrome--devtools-sessions '())
+  (chrome-retrieve-tabs)
+  (message "Reset all devtools sessions"))
 
 (defun chrome-devtools-connect ()
   "Add a session to the devtools session state.
