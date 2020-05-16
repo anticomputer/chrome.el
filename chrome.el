@@ -136,7 +136,7 @@ You can enable a DevTools remote debugging port for Chrome with:
 Note that anyone who can send direct, or indirect, requests to this
 port can drive, inspect, and otherwise influence your Chrome session.")
 
-(defvar chrome-auto-retrieve nil
+(defvar chrome-auto-retrieve t
   "If non-nil, retrieve all tabs after certain operations.
 
 Note that every retrieval recreates tab state in Emacs and thus discards
