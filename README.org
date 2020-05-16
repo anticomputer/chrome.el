@@ -32,10 +32,12 @@ access.
 
 1) google-chrome --remote-debugging-port=9222
 2) M-x chrome RET
-3) M-x chrome-devtools-connect RET localhost RET 9222 RET
 
-To reset the session list you can M-x chrome-devtools-reset RET which
-will purge all active sessions from the session list.
+To reset the session list you can M-x chrome-reset RET which will purge all
+active sessions from the session list.
+
+To add another chrome devtools session on a different port you can M-x
+chrome-connect RET
 
 NOTE: you can connect as many concurrent and independent Chrome Devtools
 connections sessions as you require, mixing both local and remote Chrome
