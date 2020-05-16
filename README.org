@@ -28,7 +28,7 @@ This fork/port aims to retain basic feature parity with osa-chrome.el where
 possible without introducing additional dependencies beyond the Devtools API
 access.
 
-Getting Started:
+* Getting Started
 
 1) google-chrome --remote-debugging-port=9222
 2) M-x chrome RET
@@ -47,7 +47,7 @@ e.g. '(9222 . "127.0.0.1"). This facilates e.g. user specified functions
 that also manage spawning ephemeral Chrome instances with a managed range of
 Devtools ports.
 
-Security Warning:
+* Security Warning
 
 Note that anyone with access to this port can both inspect and influence your
 Chrome Session. It may be possible to bypass CORS in certain scenarios and
@@ -58,6 +58,8 @@ You can read more about the Devtools protocol here:
 
 https://chromedevtools.github.io/devtools-protocol/
 
+* Additional Information
+
 For further information, much of the original ose-chrome.el mode logic wrt
 filtering, use cases and methodoloy holds, and I recommend you read the
 original documentation for osa-chrome.el:
@@ -66,5 +68,3 @@ https://github.com/atomontage/osa-chrome/
 
 Where possible chrome.el will maintain basic feature parity with
 osa-chrome.el.
-
-TL;DR:
