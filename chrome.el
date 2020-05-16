@@ -743,6 +743,7 @@ tab-ids, urls and titles are vectors of same length.
                          (vector tab-ids)
                          (vector tab-urls)
                          (vector tab-titles))))
+        (message "Fetched %d tabs from devtools://%s:%d" (length devtabs) host port)
         ;; we use the devtools port as an identifier, which is expected to be a string in the indexer
         (cl-pushnew (cons (format "%s:%d" host port)
                           (vector window-ids active-tab-ids tabs-vect))
@@ -810,15 +811,29 @@ tab-ids, urls and titles are vectors of same length.
      (vector tab-id)
      "activate")))
 
-;; xxx: todo
-(defsubst chrome--view-source-single (window-id tab-id)
-  (message "called chrome--view-source-single-devtools")
-  nil)
+(defun chrome--tab-from-id (host-port tab-id)
+  (gethash (cons host-port tab-id) chrome--cached-tabs))
 
-;; xxx: todo
+(defsubst chrome--view-source-single (window-id tab-id)
+  (let* ((host (cdr (chrome--devtools-default-session)))
+         (port (car (chrome--devtools-default-session)))
+         (tab (chrome--tab-from-id (format "%s:%d" host port) tab-id)))
+    (when tab
+      (chrome--devtools-apply-verb
+       host
+       port
+       (vector nil)
+       (format "new?view-source:%s" (chrome-tab-url tab))))))
+
 (defsubst chrome--view-source-multi (host-port window-id tab-id)
-  (message "called chrome--view-source-multi-devtools")
-  nil)
+  (destructuring-bind (host port) (split-string host-port ":" t " .*")
+    (let ((tab (chrome--tab-from-id (format "%s:%s" host port) tab-id)))
+      (when tab
+        (chrome--devtools-apply-verb
+         host
+         (string-to-number port)
+         (vector nil)
+         (format "new?view-source:%s" (chrome-tab-url tab)))))))
 
 ;;;
 ;;; Interactive
@@ -1035,9 +1050,7 @@ If there is a region, only unmark tabs in region."
 
 
 (defun chrome-view-source ()
-  "View HTML source of tab at point in side buffer.
-You need to enable `Allow JavaScript from Apple Events' under View->Developer
-in Chrome to use this command."
+  "View HTML source of tab at point."
   (interactive)
   (cl-assert (eq major-mode 'chrome-mode) t)
   (when-let ((tab (chrome-current-tab)))
@@ -1045,17 +1058,18 @@ in Chrome to use this command."
       (let* ((strict-unpacking t)
              (window-id (chrome-tab-window-id tab))
              (tab-id    (chrome-tab-id tab))
-             (host-port       (chrome-tab-host-port tab)))
+             (host-port (chrome-tab-host-port tab)))
         (chrome--check-error (ret)
           (if chrome-single-instance
               (chrome--view-source-single window-id tab-id)
             (chrome--view-source-multi host-port window-id tab-id))
-          (let ((buf (get-buffer-create "*chrome-source*")))
-            (with-current-buffer buf
-              (erase-buffer)
-              (insert (cdr (assoc "html" ret)))
-              (goto-char (point-min)))
-            (display-buffer buf)))))
+          ;; (let ((buf (get-buffer-create "*chrome-source*")))
+          ;;   (with-current-buffer buf
+          ;;     (erase-buffer)
+          ;;     (insert (cdr (assoc "html" ret)))
+          ;;     (goto-char (point-min)))
+          ;;   (display-buffer buf))
+          )))
     (force-mode-line-update)))
 
 (defun chrome-visit-tab (&optional noraise)
