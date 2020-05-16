@@ -6,9 +6,9 @@ chrome.el is a portable Emacs interface to Google Chrome.
 
 It is forked off of osa-chrome.el (https://github.com/atomontage/osa-chrome)
 which is an Emacs Mac port interface to Google Chrome and relies on Apple
-events as well as Mitsuharu Yamamoto's excellent Emacs mac port.
+events as well as Yamamoto Mitsuharu's excellent Emacs mac port.
 
-In contrast, chrome.el only requires access to the Chrome Devtools debugging
+In contrast, chrome.el only requires access to the Chrome DevTools debugging
 API and is thus fully cross-platform. Its only dependencies are stock Emacs
 and Google Chrome itself.
 
@@ -25,8 +25,9 @@ Examples include:
   profile managers such as https://github.com/atomontage/chrome-private
 
 This fork/port aims to retain basic feature parity with osa-chrome.el where
-possible without introducing additional dependencies beyond the Devtools API
-access.
+possible without introducing additional dependencies beyond DevTools API access.
+
+See [[Additional Information]] for a list of differences with osa-chrome.el.
 
 * Getting Started
 
@@ -62,11 +63,35 @@ https://chromedevtools.github.io/devtools-protocol/
 
 * Additional Information
 
+A list of differences with osa-chrome.el is included below. These stem from
+the underlying APIs (chrome-devtools vs macOS automation).
+
++ When visiting a tab, chrome.el always raises the Chrome window, unlike
+  osa-chrome.el where this is up to the user.
+
++ When accessing a restored Chrome session that contains a lot of tabs,
+  chrome.el will retrieve and only be able to control tabs that Chrome fully
+  loads, typically a small fraction of all tabs. osa-chrome.el retrieves
+  and is able to control all tabs.
+
++ chrome.el is only able to show one active tab. This means that when
+  controlling tabs from multiple windows / multiple Chrome instances, some
+  active tabs will not be shown as "active" in Emacs. This issue does not
+  exist in osa-chrome.el which is able to accurately track and display all
+  active tabs.
+
++ chrome.el does not maintain an exact ordering of tabs as displayed in Chrome.
+  osa-chrome.el tabs are always displayed in exactly the same order as they are
+  in the browser, allowing the user to reason about tab lifetimes.
+
++ When viewing the HTML source of a tab, chrome.el will open a new tab in Chrome
+  that contains the HTML source. osa-chrome.el does not open any new tabs and
+  simply shows the source in an Emacs side-buffer.
+
 For further information, much of the original ose-chrome.el mode logic wrt
 filtering, use cases and methodoloy holds, and I recommend you read the
 original documentation for osa-chrome.el:
 
 https://github.com/atomontage/osa-chrome/
 
-Where possible chrome.el will maintain basic feature parity with
-osa-chrome.el.
+Where possible chrome.el will maintain basic feature parity with osa-chrome.el.
