@@ -763,7 +763,7 @@ tab-ids, urls and titles are vectors of same length.
   (gethash (cons port-host tab-id) chrome--cached-tabs))
 
 (defsubst chrome--view-source-multi (port-host window-id tab-id)
-  (let ((tab (chrome--tab-from-id (format "%s:%s" host port) tab-id)))
+  (let ((tab (chrome--tab-from-id port-host tab-id)))
     (when tab
       (chrome--devtools-apply-verb
        (cdr port-host)
