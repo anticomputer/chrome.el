@@ -2,7 +2,7 @@
 
 chrome.el is a portable Emacs interface to Google Chrome.
 
-#+html:<p align="center"><img src="img/osa-chrome.gif" /></p>
+#+html:<p align="center"><img src="img/chrome-demo.gif" /></p>
 
 It is forked off of osa-chrome.el (https://github.com/atomontage/osa-chrome)
 which is an Emacs Mac port interface to Google Chrome and relies on Apple
