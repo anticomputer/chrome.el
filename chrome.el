@@ -80,6 +80,12 @@
   ""
   :group 'chrome)
 
+(defface chrome-tab-deleted-face
+  '((((class color) (background dark))  (:foreground "#8d021f"))
+    (((class color) (background light)) (:foreground "#8d021f")))
+  ""
+  :group 'chrome)
+
 (defface chrome-tab-marked-active-face
   '((((class color) (background dark))  (:foreground "#ffffaa"))
     (((class color) (background light)) (:foreground "#800080")))
@@ -154,6 +160,7 @@ All other operations always trigger a tab retrieval post-operation.")
   (id        nil :read-only t)    ; Unique id of tab in this Chrome instance
   (url       nil :read-only t)    ; URL of tab
   (title     nil :read-only t)    ; Title of tab
+  is-deleted                      ; Is the tab in a deleted state?
   is-active                       ; Is tab selected in Chrome buffer?
   is-marked                       ; Is tab marked in Emacs?
   is-duplicate                    ; Is tab a dupicate of another? (based on URL)
@@ -185,35 +192,48 @@ Values are chrome-tab instances.")
   "Index TABS into `chrome--session-index' and `chrome--cached-tabs'.
 TABS must be an alist as returned from `chrome-get-tabs'."
   (clrhash chrome--session-index)
-  (clrhash chrome--cached-tabs)
-  (cl-loop
-   for (session . tab-data) in tabs
-   for port         = (car session)
-   for host         = (cdr session)
-   for tab-count    = 0
-   for process-tabs = nil
-   with seen-urls   = (make-hash-table :test 'equal)
-   do
-   (cl-loop
-    for index from 0
-    for tab in tab-data
-    for tab-id = (alist-get 'id tab)
-    for url    = (alist-get 'url tab)
-    for title  = (alist-get 'title tab) do
-    (let ((tab (chrome-tab-create :port port :host host
-                                  :session session
-                                  :id tab-id :url url
-                                  :title title
-                                  :is-active (= index 0))))
-      (push tab process-tabs)
-      (if (gethash url seen-urls)
-          (setf (chrome-tab-is-duplicate tab) t)
-        (puthash url t seen-urls))
-      (puthash (cons session tab-id) tab chrome--cached-tabs))
-    finally (cl-incf tab-count index))
-   ;; A hash table indexed by session containing all tabs
-   (setf (gethash session chrome--session-index)
-         (cons tab-count (nreverse process-tabs)))))
+  (let ((local-tab-cache (make-hash-table :test 'equal)))
+    (cl-loop
+     for (session . tab-data) in tabs
+     for port         = (car session)
+     for host         = (cdr session)
+     for tab-count    = 0
+     for process-tabs = nil
+     with seen-urls   = (make-hash-table :test 'equal)
+     do
+     (cl-loop
+      for index from 0
+      for tab in tab-data
+      for tab-id = (alist-get 'id tab)
+      for url    = (alist-get 'url tab)
+      for title  = (alist-get 'title tab) do
+      ;; we want to retain is-deleted state on tabs until they're fully purged
+      ;; we don't want to interrupt any other tab states so only recycle is-deleted
+      ;; this also prevents deleted tabs from re-claiming is-active
+      (let* ((cached-tab (gethash (cons session tab-id) chrome--cached-tabs))
+             (tab
+              (if (and cached-tab (chrome-tab-is-deleted cached-tab))
+                  (progn
+                    ;; xxx: for debug ... remove
+                    (message "Hit deleted tab from cache!")
+                    cached-tab)
+                (chrome-tab-create :port port :host host
+                                   :session session
+                                   :id tab-id :url url
+                                   :title title
+                                   :is-active (= index 0)))))
+        (push tab process-tabs)
+        (if (gethash url seen-urls)
+            (setf (chrome-tab-is-duplicate tab) t)
+          (puthash url t seen-urls))
+        ;; update the local cache
+        (puthash (cons session tab-id) tab local-tab-cache))
+      finally (cl-incf tab-count index))
+     ;; A hash table indexed by session containing all tabs
+     (setf (gethash session chrome--session-index)
+           (cons tab-count (nreverse process-tabs))))
+    ;; update the global cache
+    (setf chrome--cached-tabs local-tab-cache)))
 
 (defvar-local chrome--visible-tabs nil)
 (defvar-local chrome--marked-tabs 0)
@@ -287,12 +307,11 @@ TABS must be an alist as returned from `chrome-get-tabs'."
     (cl-loop
      with active-tabs
      for session being the hash-keys of chrome--session-index
-     for session-tabs = (gethash session chrome--session-index)
-     for tabs         = (cdr session-tabs)
+     for session-tabs = (cdr (gethash session chrome--session-index))
      with line        = 1
      do
      (cl-loop
-      for tab in tabs do
+      for tab in session-tabs do
       ;; Matching
       (if (and (chrome--limit-tab tab)
                (chrome--filter-tab tab))
@@ -576,10 +595,11 @@ tab retrieval from Chrome.
   "Return string representation of TAB.
 String is used as is to display TAB in *chrome-tabs* buffer.
 It must not span more than one line but it may contain text properties."
-  (let ((url       (chrome-tab-url tab))
-        (title     (chrome-tab-title tab))
-        (is-active (chrome-tab-is-active tab))
-        (is-marked (chrome-tab-is-marked tab)))
+  (let ((url        (chrome-tab-url tab))
+        (title      (chrome-tab-title tab))
+        (is-active  (chrome-tab-is-active tab))
+        (is-marked  (chrome-tab-is-marked tab))
+        (is-deleted (chrome-tab-is-deleted tab)))
     (let ((str (concat
                 (if is-marked "* " "  ")
                 (if (eq chrome-default-view :title)
@@ -590,7 +610,9 @@ It must not span more than one line but it may contain text properties."
             (is-marked
              (setq str (propertize str 'face 'chrome-tab-marked-face)))
             (is-active
-             (setq str (propertize str 'face 'chrome-tab-active-face))))
+             (setq str (propertize str 'face 'chrome-tab-active-face)))
+            (is-deleted
+             (setq str (propertize str 'face 'chrome-tab-deleted-face))))
       str)))
 
 (defun chrome-limit-tab (tab)
@@ -641,7 +663,7 @@ with id, url, title keys."
                 (json-read))))
     (cl-loop with count = 0
              for tab-data across data
-             for type = (cdr (assoc 'type tab-data))
+             for type    = (cdr (assoc 'type tab-data))
              for is-page = (equal type "page")
              when is-page do (cl-incf count)
              when is-page collect (list (assoc 'id    tab-data)
@@ -652,10 +674,18 @@ with id, url, title keys."
 
 (cl-defun chrome-devtools-uri (&key verb id (host "127.0.0.1") (port 9222))
   "Return a DevTools remote debugging VERB/ID uri."
-  (let* ((action (if id
-                     (format "%s/%s" verb id)
-                   verb)))
-    (format "http://%s:%d/json/%s" host port action)))
+  ;; anything this isn't an explicit verb is assumed to be an uri to visit
+  (format "http://%s:%d/json/%s" host port
+          (cond
+           ;; verbs that take the id as an argument
+           ((member verb '("close" "activate"))
+            (format "%s/%s" verb id))
+           ;; single verbs
+           ((member verb '("list"))
+            (format "%s" verb))
+           ;; everything else is treated as a uri target
+           (t
+            (format "new?%s" verb)))))
 
 (defun chrome-get-tabs ()
   "Return a record (alist) containing tab information.
@@ -688,16 +718,17 @@ The first tab in the list of tabs is the active one."
 
 (defsubst chrome--delete (tab)
   (chrome--devtools-do tab "close")
-  ;; XXX: DevTools sometimes responds before the tab is gone
-  ;; XXX: errors should go here as well
+  ;; XXX: DevTools sometimes responds before the tab is gone we
+  ;; XXX: address this by presenting visual state of deletion progress
+  (setf (chrome-tab-is-deleted tab) t)
   (chrome-retrieve-tabs))
 
-(defsubst chrome--visit-tab (tab)
+(defsubst chrome--visit (tab)
   (chrome--devtools-do tab "activate"))
 
 (defsubst chrome--view-source (tab)
   (chrome--devtools-do
-   tab (format "new?view-source:%s" (chrome-tab-url tab))))
+   tab (format "view-source:%s" (chrome-tab-url tab))))
 
 ;;;
 ;;; Interactive
@@ -841,7 +872,8 @@ and limit."
         collect tab into marked-tabs
         finally do
         (cl-loop for tab in marked-tabs do
-                 (chrome--devtools-do tab "close")))))))
+                 (chrome--delete tab))))
+      (chrome-retrieve-tabs))))
 
 (defun chrome-mark-tab (&optional tab)
   "Mark tab at point."
@@ -919,7 +951,7 @@ This brings Chrome into focus and raises the window that contains the tab."
   (cl-assert (eq major-mode 'chrome-mode) t)
   (when-let ((tab (chrome-current-tab)))
     (chrome--with-timing
-      (chrome--visit-tab tab)
+      (chrome--visit tab)
       (chrome-retrieve-tabs))))
 
 (defun chrome-goto-active ()
