@@ -715,10 +715,11 @@ The first tab in the list of tabs is the active one."
       :port (chrome-tab-port tab)))))
 
 (defsubst chrome--delete (tab)
-  (chrome--devtools-do tab "close")
-  ;; XXX: DevTools sometimes responds before the tab is gone we
-  ;; XXX: address this by presenting visual state of deletion progress
-  (setf (chrome-tab-is-deleted tab) t)
+  ;; don't try to delete things that are already in purgatory
+  (unless (chrome-tab-is-deleted tab)
+    (chrome--devtools-do tab "close")
+    ;; devtools is async on deletion so we have to maintain state on our end
+    (setf (chrome-tab-is-deleted tab) t))
   (chrome-retrieve-tabs))
 
 (defsubst chrome--visit (tab)
