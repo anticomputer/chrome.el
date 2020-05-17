@@ -948,10 +948,31 @@ If there is a region, only unmark tabs in region."
 This brings Chrome into focus and raises the window that contains the tab."
   (interactive)
   (cl-assert (eq major-mode 'chrome-mode) t)
-  (when-let ((tab (chrome-current-tab)))
+  (when-let ((current-tab (chrome-current-tab)))
     (chrome--with-timing
-      (chrome--visit tab)
-      (chrome-retrieve-tabs))))
+      (chrome--visit current-tab)
+      (if chrome-auto-retrieve
+          (chrome-retrieve-tabs)
+        ;; Need to manually mark the current tab as active and the
+        ;; previously active tab in this session as inactive then render both.
+        (let ((pos     (point))
+              (tab-id  (chrome-tab-id current-tab))
+              (session (chrome-tab-session current-tab))
+              (inhibit-read-only t))
+          ;; Mark current tab as active and render it.
+          (setf (chrome-tab-is-active current-tab) t)
+          (chrome--render-tab current-tab t)
+          ;; Search for previously active tab in this session, mark it as
+          ;; inactive and if it's visible render it.
+          (cl-loop for tab in (cdr (gethash session chrome--session-index))
+                   when (and (not (eq current-tab tab))
+                             (chrome-tab-is-active tab))
+                   do
+                   (setf (chrome-tab-is-active tab) nil)
+                   (when (gethash (chrome-tab-line tab) chrome--visible-tabs)
+                     (chrome--render-tab tab))
+                   (cl-return))
+          (goto-char pos))))))
 
 (defun chrome-goto-active ()
   "Move point to the next active tab.
