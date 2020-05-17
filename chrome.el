@@ -603,14 +603,14 @@ It must not span more than one line but it may contain text properties."
                 (if (eq chrome-default-view :title)
                     (if (string-equal "" title) url title)
                   url))))
-      (cond ((and is-marked is-active)
+      (cond (is-deleted
+             (setq str (propertize str 'face 'chrome-tab-deleted-face)))
+            ((and is-marked is-active)
              (setq str (propertize str 'face 'chrome-tab-marked-active-face)))
             (is-marked
              (setq str (propertize str 'face 'chrome-tab-marked-face)))
             (is-active
-             (setq str (propertize str 'face 'chrome-tab-active-face)))
-            (is-deleted
-             (setq str (propertize str 'face 'chrome-tab-deleted-face))))
+             (setq str (propertize str 'face 'chrome-tab-active-face))))
       str)))
 
 (defun chrome-limit-tab (tab)
