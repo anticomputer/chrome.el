@@ -968,6 +968,7 @@ This brings Chrome into focus and raises the window that contains the tab."
           (chrome--visit current-tab)
         ('error
          (chrome--message "%s" (error-message-string err))
+         (message "Tab no longer exists.")
          (setf (chrome-tab-is-deleted current-tab) t)
          nil))
       (if chrome-auto-retrieve
