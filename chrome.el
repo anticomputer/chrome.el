@@ -143,12 +143,12 @@ You can enable a DevTools remote debugging port for Chrome with:
 Note that anyone who can send direct, or indirect, requests to this
 port can drive, inspect, and otherwise influence your Chrome session.")
 
-(defvar chrome-auto-retrieve t
+(defvar chrome-auto-retrieve nil
   "If non-nil, retrieve all tabs after certain operations.
 
 Note that every retrieval recreates tab state in Emacs and thus discards
 what was previously there (except filter and limit).
-Currently this only applies to `chrome-connect'.
+Currently this only applies to `chrome-visit-tab'.
 
 All other operations always trigger a tab retrieval post-operation.")
 
@@ -695,16 +695,26 @@ session is the currently active DevTools session, a cons of form (port . host)
 tabs is a list of tabs, where each tab is an alist with id, url, title keys.
 
 The first tab in the list of tabs is the active one."
-  (cl-loop with tab-count = 0
-           for session-count from 0
+  (cl-loop with tab-count     = 0
+           with session-count = 0
+           with error-count   = 0
            for session in chrome-sessions
            for port = (car session)
            for host = (cdr session)
-           for (cnt . tabs) = (chrome--get-tabs port host)
-           do (cl-incf tab-count cnt)
-           collect (cons session tabs)
-           finally (message "Retrieved %d tabs from %d sessions"
-                            tab-count session-count)))
+           for (cnt . tabs) = (condition-case err
+                                  (chrome--get-tabs port host)
+                                ('error
+                                 (cl-incf error-count)
+                                 (chrome--message "%s" (error-message-string err))
+                                 nil))
+           when cnt do (progn (cl-incf tab-count cnt)
+                              (cl-incf session-count))
+           when tabs collect (cons session tabs)
+           finally (message "Retrieved %d tabs from %d sessions%s"
+                            tab-count session-count
+                            (if (> error-count 0)
+                                (format ", %d sessions errored" error-count)
+                              ""))))
 
 (defsubst chrome--devtools-do (tab verb)
   (with-temp-buffer
@@ -753,8 +763,7 @@ The first tab in the list of tabs is the active one."
         (message "DevTools session %s:%d already exists" host port)
       (setq-local chrome-sessions (cons session chrome-sessions))
       (message "Added DevTools session %s:%d" host port)
-      (when chrome-auto-retrieve
-        (chrome-retrieve-tabs)))))
+      (chrome-retrieve-tabs))))
 
 (defun chrome-toggle-timing ()
   "Toggle timing information on the header line."
