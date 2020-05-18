@@ -859,9 +859,14 @@ and limit."
   "Delete tab at point."
   (interactive)
   (cl-assert (eq major-mode 'chrome-mode) t)
-  (when-let ((tab (chrome-current-tab)))
+  (when-let ((current-tab (chrome-current-tab)))
     (chrome--with-timing
-      (chrome--delete tab)
+      (condition-case err
+          (chrome--delete current-tab)
+        ('error
+         (chrome--message "%s" (error-message-string err))
+         (setf (chrome-tab-is-deleted current-tab) t)
+         nil))
       (forward-line)
       (chrome-retrieve-tabs))))
 
@@ -959,7 +964,12 @@ This brings Chrome into focus and raises the window that contains the tab."
   (cl-assert (eq major-mode 'chrome-mode) t)
   (when-let ((current-tab (chrome-current-tab)))
     (chrome--with-timing
-      (chrome--visit current-tab)
+      (condition-case err
+          (chrome--visit current-tab)
+        ('error
+         (chrome--message "%s" (error-message-string err))
+         (setf (chrome-tab-is-deleted current-tab) t)
+         nil))
       (if chrome-auto-retrieve
           (chrome-retrieve-tabs)
         ;; Need to manually mark the current tab as active and the
