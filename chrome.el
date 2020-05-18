@@ -699,6 +699,7 @@ The first tab in the list of tabs is the active one."
            with session-count = 0
            with error-count   = 0
            for session in chrome-sessions
+           for total-sessions from 0
            for port = (car session)
            for host = (cdr session)
            for (cnt . tabs) = (condition-case err
@@ -710,8 +711,8 @@ The first tab in the list of tabs is the active one."
            when cnt do (progn (cl-incf tab-count cnt)
                               (cl-incf session-count))
            when tabs collect (cons session tabs)
-           finally (message "Retrieved %d tabs from %d sessions%s"
-                            tab-count session-count
+           finally (message "Retrieved %d tabs from %d sessions, %d sessions total%s"
+                            tab-count session-count total-sessions
                             (if (> error-count 0)
                                 (format ", %d sessions errored" error-count)
                               ""))))
