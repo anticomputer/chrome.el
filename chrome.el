@@ -152,6 +152,9 @@ Currently this only applies to `chrome-connect'.
 
 All other operations always trigger a tab retrieval post-operation.")
 
+(defvar chrome-buffer-name "*chrome-tabs*"
+  "Name of buffer created to display tabs.")
+
 (cl-defstruct (chrome-tab
                (:constructor chrome-tab-create)
                (:copier nil))
@@ -591,7 +594,7 @@ tab retrieval from Chrome.
 
 (defun chrome-render-tab (tab)
   "Return string representation of TAB.
-String is used as is to display TAB in *chrome-tabs* buffer.
+String is used as is to display TAB in `chrome-buffer-name' buffer.
 It must not span more than one line but it may contain text properties."
   (let ((url        (chrome-tab-url tab))
         (title      (chrome-tab-title tab))
@@ -989,7 +992,7 @@ By repeatedly invoking this command, you can cycle through all active tabs."
 (defun chrome ()
   "Google Chrome remote tab control."
   (interactive)
-  (let ((buf (get-buffer-create "*chrome-tabs*")))
+  (let ((buf (get-buffer-create chrome-buffer-name)))
     (switch-to-buffer buf)
     (unless (eq major-mode 'chrome-mode)
       (chrome-mode))))
