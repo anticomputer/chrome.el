@@ -58,6 +58,7 @@
 (require 'subr-x)
 (require 'cl-lib)
 (require 'auth-source)
+(require 'url-util)
 
 (defgroup chrome nil
   "Google Chrome remote tab control."
@@ -684,7 +685,9 @@ with id, url, title keys."
             (format "%s" verb))
            ;; everything else is treated as a uri target
            (t
-            (format "new?%s" verb)))))
+            ;; devtools decodes the new parameter, so hexify the verb to
+            ;; deal with e.g. view-source: of a tab with encoded chars
+            (format "new?%s" (url-hexify-string verb))))))
 
 (defun chrome-get-tabs ()
   "Return a record (alist) containing tab information.
